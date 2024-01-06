@@ -1,4 +1,4 @@
-use serde_json;
+use serde_json::{self, Map};
 use std::env;
 
 // Available if you need it!
@@ -31,6 +31,23 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
                 rest = remainder;
             }
             return (values.into(), &rest[1..]);
+        }
+        Some('d') => {
+            let mut dicts = Map::new();
+            let mut rest = encoded_value.split_at(1).1;
+            while !rest.is_empty() && !rest.starts_with('e') {
+                let (k, remainder) = decode_bencoded_value(rest);
+                let k = match k {
+                   serde_json::Value::String(k) => k,
+                    k => {
+                        panic!("dict key must be string not {k:?}");
+                    }
+                };
+                let (v, remainder) = decode_bencoded_value(remainder);
+                dicts.insert(k, v);
+                rest = remainder;
+            }
+            return (dicts.into(), &rest[1..]);
         }
         Some('0'..='9') => {
             if let Some((len, rest)) = encoded_value.split_once(':') {
