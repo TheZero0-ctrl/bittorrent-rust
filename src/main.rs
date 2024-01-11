@@ -1,6 +1,6 @@
 use bittorrent_starter_rust::torrent::{Torrent, Keys};
 use bittorrent_starter_rust::tracker::{TrackerRequest, TrackerResponse};
-use bittorrent_starter_rust::peer::Handshake;
+use bittorrent_starter_rust::peer::{Handshake, Message, MessageTag, MessageFramer};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::net::SocketAddrV4;
 use std::path::PathBuf;
@@ -34,6 +34,13 @@ pub enum Commands  {
     Handshake {
         torrent: PathBuf,
         ip_port: SocketAddrV4
+    },
+
+    DownloadPiece {
+        #[arg(short)]
+        output: PathBuf,
+        torrent: PathBuf,
+        piece_index: usize
     }
 }
 
@@ -173,6 +180,45 @@ async fn main() -> anyhow::Result<()>{
             assert_eq!(handshake.length, 19);
             assert_eq!(&handshake.bittorrent, b"BitTorrent protocol");
             println!("Peer ID: {}", hex::encode(handshake.peer_id));
+        }
+        Commands::DownloadPiece { output, torrent, piece_index } => {
+            let f = std::fs::read(torrent).context("open torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&f).context("parse torrent file")?;
+            let length = if let Keys::SingleFile { length } = t.info.keys {
+                length
+            } else {
+                todo!()
+            };
+            let encoded_info = serde_bencode::to_bytes(&t.info).context("reencode info")?;
+            let mut hasher = Sha1::new();
+            hasher.update(&encoded_info);
+            let info_hash  = hasher.finalize();
+            let request = TrackerRequest::new(length);
+            let url_params = serde_urlencoded::to_string(&request).unwrap();
+            let tracker_url = format!(
+                "{}?{}&info_hash={}",
+                t.announce,
+                url_params,
+                urlencode(&info_hash.into()),
+            );
+            let response = reqwest::get(tracker_url).await?.bytes().await?;
+            let response: TrackerResponse = serde_bencode::from_bytes(&response).unwrap();
+            let peer = &response.peers.0[0];
+            let mut peer = tokio::net::TcpStream::connect(peer).await.context("connect to peer")?;
+            let mut handshake = Handshake::new(info_hash.into(), *b"00112233445566778899");
+            {
+                let handshake_bytes = &mut handshake as *mut Handshake as *mut [u8; std::mem::size_of::<Handshake>()];
+                let handshake_bytes: &mut [u8; std::mem::size_of::<Handshake>()] = unsafe {
+                    &mut *handshake_bytes
+                };
+                peer.write_all(handshake_bytes).await.context("write handshake")?;
+                peer.read_exact(handshake_bytes).await.context("read handshake")?;
+            }
+            assert_eq!(handshake.length, 19);
+            assert_eq!(&handshake.bittorrent, b"BitTorrent protocol");
+
+            let peer = tokio_util::codec::Framed::new(peer, MessageFramer);
+
         }
     }
     Ok(())
