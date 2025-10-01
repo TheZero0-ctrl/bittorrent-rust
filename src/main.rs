@@ -130,10 +130,7 @@ async fn main() -> anyhow::Result<()>{
             if let Keys::SingleFile { length } = t.info.keys {
                 println!("Length: {}", length);
             }
-            let encoded_info = serde_bencode::to_bytes(&t.info).context("reencode info")?;
-            let mut hasher = Sha1::new();
-            hasher.update(&encoded_info);
-            let info_hash  = hasher.finalize();
+            let info_hash  = t.info_hash();
             println!("Info Hash: {}", hex::encode(&info_hash));
             println!("Piece Length: {}", t.info.piece_length);
             println!("Piece Hashes:");

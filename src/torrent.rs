@@ -1,10 +1,48 @@
 use serde::{Deserialize, Serialize};
 pub use hashes::Hashes;
+use anyhow::Context;
+use sha1::{Sha1, Digest};
+use crate::download;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Torrent {
     pub announce: String,
     pub info: Info
+}
+
+impl Torrent {
+    pub async fn read(file: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let f = tokio::fs::read(file).await.context("open torrent file")?;
+        let t: Torrent = serde_bencode::from_bytes(&f).context("parse torrent file")?;
+        Ok(t)
+    }
+
+    pub fn info_hash(&self) -> [u8; 20] {
+        let encoded_info = serde_bencode::to_bytes(&self.info).expect("reencode info");
+        let mut hasher = Sha1::new();
+        hasher.update(&encoded_info);
+        hasher
+            .finalize()
+            .try_into()
+            .expect("GenericArray<_, 20> == [_; 20]")
+    }
+
+    pub fn print_tree(&self) {
+        match self.info.keys {
+            Keys::SingleFile { .. } => {
+                println!("{}", self.name);              
+            } 
+            Keys::MultipleFile { files } => {
+                for file in files {
+                    println!("{}", file.path);
+                }
+            }
+        } 
+    }
+
+    pub async fn download_all(&self) -> anyhow::Result<Downloaded>{
+        download::all()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
